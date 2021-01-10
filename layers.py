@@ -41,6 +41,7 @@ class SelfAttention(nn.Module):
 
         # (b, n, d*3)
         x = nn.Dense(d * 3, use_bias=False, name="qkv_projection")(x)
+        
         # (b, n, d) -> (b, n, h, hsize) -> (b, h, n, hsize)
         q, k, v = [_x.reshape(b, n, h, head_size).transpose((0, 2, 1, 3)) for _x in x.split(3, axis=-1)] 
         # attention : (b, h, n, n)
@@ -49,11 +50,13 @@ class SelfAttention(nn.Module):
         # Fill -inf into mask
         if attn_mask is not None:
             # (b, 1, n, 1) * (b, 1, 1, n)
+            # TODO: need to check
             attn_mask = attn_mask[:, None, :, None] * attn_mask[:, None, None, :]
         else:
             if self.causal:
                 attn_mask = jnp.triu( jnp.ones( (n, n) ), k=1 )
-        
+                attn_mask = 1. - attn_mask[None, None, :, :]
+                
         if attn_mask is not None:
             attention = attention * attn_mask
             attention = jnp.where(attention == 0., -jnp.inf, attention)
@@ -115,17 +118,32 @@ class Transformer(nn.Module):
     num_tokens: int
     embed_size: int
     max_seq_len: int
-    encoder: nn.Module
+    N: int
+    num_heads: int
+    causal: bool = False
+    ff_multiplicative: int = 4
+    attention_dropout: float = 0.
+    ff_dropout: float = 0.
     
     def setup(self):
         self.token_emb = nn.Embed(num_embeddings=self.num_tokens, features=self.embed_size)
         self.pos_emb = nn.Embed(num_embeddings=self.max_seq_len, features=self.embed_size)
+        self.encoder = Encoder(N=self.N, num_heads=self.num_heads, causal=self.causal,
+                               ff_multiplicative=self.ff_multiplicative,
+                               attention_dropout=self.attention_dropout,
+                               ff_dropout=self.ff_dropout)
         
-    def __call__(self, x, src_mask, deterministic, *args, **kwargs):
+    def __call__(self, x, deterministic: bool = False, *args, **kwargs):
+        """
+        - x : shape (b, n)
+        """
         batch_size, seq_len = x.shape
         x = self.token_emb(x)  # (b, n, d)
-        x = x + self.pos_emb( jnp.arange(seq_len) )[None, :]
-        x = self.encoder(x, src_mask, deterministic=deterministic, *args, **kwargs)
+        x = x + self.pos_emb( jnp.arange(seq_len) )[None, :]      
+        # use default causal mask
+        x = self.encoder(x, src_mask=None, deterministic=deterministic, *args, **kwargs)
+        # x @ embedding.T : (b, n, d) @ (d, V) = (b, n, V)
+        x = self.token_emb.attend(x)  # logits
         return x
 
 
