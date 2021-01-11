@@ -39,13 +39,18 @@ def load_train_val_test(dataset: str) -> List:
     return [train, valid, test, num_users, num_items]
 
 
-def PadOrTruncate(max_len: int, pad_value: int = 0):
+def PadOrTruncate(max_len: int, pad_value: int = 0, pad_direction: str = "right"):
     
     def _inner(x: List[int]):
         if len(x) > max_len:
             return x[:max_len]
         
-        return [pad_value] * (max_len - len(x)) + x
+        if pad_direction == "left":
+            return [pad_value] * (max_len - len(x)) + x
+        elif pad_direction == "right":
+            return x + [pad_value] * (max_len - len(x))
+        else:
+            raise NotImplementedError(f"Unknown option {pad_direction}")
     
     return _inner
 
@@ -61,6 +66,25 @@ def negative_sampling(seq: List, num_items: int):
     "Sample n - 1 elements randomly in [1, num_items] but avoid elments in `seq`"
     n = len(seq)
     return [randint(1, num_items+1, seq) for i in range(n-1)]
+
+
+class DataLoader:
+    
+    def __init__(self, data: List, batch_size: int, max_seq_len: int, seed: int = 42):
+        self.data = data
+        self.batch_size = batch_size
+        self.pad_or_truncate = PadOrTruncate(max_len=max_seq_len)
+        # self.num_items = num_items
+        self.seed = seed
+        random.seed(seed)
+        
+    def __iter__(self):
+        random.shuffle(self.data)
+        for batch in iterutils.chunked(self.data, size=self.batch_size):
+            seq = [self.pad_or_truncate(e[:-1]) for e in batch]
+            pos = [self.pad_or_truncate(e[1:]) for e in batch]
+            # negs = [self.pad_or_truncate(negative_sampling(e, self.num_items)) for e in batch]
+            yield (seq, pos)
 
 
 def batchify(data: List, batch_size: int, max_seq_len: int, num_items: int, seed: int = 42):
