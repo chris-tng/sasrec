@@ -99,14 +99,13 @@ def batchify(data: List, batch_size: int, max_seq_len: int, num_items: int, seed
         yield (seq, pos, negs)
 
 
-def batchify_test(data: List, batch_size: int, max_seq_len: int, num_items: int, 
-                  num_neg_labels: int = 100):
+def batchify_test(data: List, batch_size: int, max_seq_len: int):
     pad_or_truncate = PadOrTruncate(max_len=max_seq_len)
     
     for batch in iterutils.chunked(data, size=batch_size):
         seq = [pad_or_truncate(e) for e, _ in batch]
-        labels = [[pos_label] + [randint(1, num_items+1, e) for i in range(num_neg_labels)] 
-                  for e, pos_label in batch]
-        yield (seq, labels)
+        pos = [pos_label for _, pos_label in batch]
+        # pos = [[pos_label + [randint(1, num_items+1, e) for i in range(num_neg_labels)] for e, pos_label in batch]
+        yield (seq, pos)
 
 
