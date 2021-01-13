@@ -30,20 +30,26 @@ def load_train_val_test(dataset: str) -> List:
             continue
             
         if n_items < 3:
-            train.append(items)
+            train.append( (user, items) )
         else:
-            train.append( items[:-2] )
-            valid.append( (items[:-2], items[-2]) )
-            test.append( (items[:-1], items[-1]) )
+            train.append( (user, items[:-2]) )
+            valid.append( (user, items[:-2], items[-2]) )
+            test.append( (user, items[:-1], items[-1]) )
     
-    return [train, valid, test, num_users, num_items]
+    return [user_to_items, train, valid, test, num_users, num_items]
 
 
-def PadOrTruncate(max_len: int, pad_value: int = 0, pad_direction: str = "right"):
+def PadOrTruncate(max_len: int, pad_value: int = 0, 
+                  pad_direction: str = "right", truncate_direction: str = "left"):
     
     def _inner(x: List[int]):
         if len(x) > max_len:
-            return x[:max_len]
+            if truncate_direction == "right":
+                return x[:max_len]
+            elif truncate_direction == "left":
+                return x[-max_len:]
+            else:
+                raise NotImplementedError(f"Unknown option {truncate_direction}")
         
         if pad_direction == "left":
             return [pad_value] * (max_len - len(x)) + x
@@ -81,30 +87,18 @@ class DataLoader:
     def __iter__(self):
         random.shuffle(self.data)
         for batch in iterutils.chunked(self.data, size=self.batch_size):
-            seq = [self.pad_or_truncate(e[:-1]) for e in batch]
-            pos = [self.pad_or_truncate(e[1:]) for e in batch]
+            seq = [self.pad_or_truncate(e[:-1]) for _, e in batch]
+            pos = [self.pad_or_truncate(e[1:]) for _, e in batch]
             # negs = [self.pad_or_truncate(negative_sampling(e, self.num_items)) for e in batch]
             yield (seq, pos)
-
-
-def batchify(data: List, batch_size: int, max_seq_len: int, num_items: int, seed: int = 42):
-    random.seed(seed)
-    random.shuffle(data)
-    pad_or_truncate = PadOrTruncate(max_len=max_seq_len)
-    
-    for batch in iterutils.chunked(data, size=batch_size):
-        seq = [pad_or_truncate(e[:-1]) for e in batch]
-        pos = [pad_or_truncate(e[1:]) for e in batch]
-        negs = [pad_or_truncate(negative_sampling(e, num_items)) for e in batch]
-        yield (seq, pos, negs)
 
 
 def batchify_test(data: List, batch_size: int, max_seq_len: int):
     pad_or_truncate = PadOrTruncate(max_len=max_seq_len)
     
     for batch in iterutils.chunked(data, size=batch_size):
-        seq = [pad_or_truncate(e) for e, _ in batch]
-        pos = [pos_label for _, pos_label in batch]
+        seq = [pad_or_truncate(e) for _, e, _ in batch]
+        pos = [pos_label for _, _, pos_label in batch]
         # pos = [[pos_label + [randint(1, num_items+1, e) for i in range(num_neg_labels)] for e, pos_label in batch]
         yield (seq, pos)
 
