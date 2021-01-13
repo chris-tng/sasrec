@@ -103,7 +103,7 @@ model = Transformer(num_tokens=num_items+1,
 init_vars = jax.jit(model.init)({"params": init_rng, "dropout": dropout_rng}, x=jnp.ones(input_shape, jnp.int32))
 
 # +
-base_lr = 0.5
+base_lr = 2.0
 
 learning_rate_fn = create_learning_rate_scheduler(base_lr, warmup_steps=4000)
 
@@ -122,11 +122,13 @@ train_dl = DataLoader(train_ds, batch_size, max_seq_len, seed = 42)
 
 # +
 start_step = 0
-num_train_steps = 10000      # Max number of training steps.
+num_train_steps = 50000      # Max number of training steps.
 train_loss = 0. ; train_acc = 0.
 log_every = 200
-
+do_eval = 1000
 train_it = iter(train_dl)
+start = time.time()
+
 for step in range(start_step, num_train_steps):
     try:
         seq, pos = next(train_it)
@@ -162,12 +164,33 @@ for step in range(start_step, num_train_steps):
 
     # compute acc
     acc = compute_weighted_accuracy(logits, targets, weights)
-
+    
     # train_loss += metrics["loss"]
     # train_acc += metrics["acc"]
     train_loss += loss
-    train_acc += acc    
+    train_acc += acc
     
     if step % log_every == 0 and step > 0:
-        print(f"[{step}][LR:{lr:.4f}] Loss: {train_loss / log_every:.4f} - Acc: {train_acc / log_every:.4f}")
-        train_loss = 0. ; train_acc = 0.
+        hit10 = compute_hitk(logits, targets, topk = 10)
+        elapsed = time.time() - start
+        
+        print(f"[{step}][LR:{lr:.4f}] Loss: {train_loss / log_every:.4f} - Acc: {train_acc / log_every:.4f} - Hit10: {hit10:.4f}")
+        print(f"Elapsed: {elapsed:.2f}")
+        train_loss = 0. ; train_acc = 0. ; start = time.time()
+
+    if step % do_eval == 0 and step > 0:
+        # Eval
+        valid_dl = batchify_test(valid_ds, batch_size=batch_size, max_seq_len=max_seq_len)
+        valid_acc = []
+        valid_hitk = []
+        for seq, pos in valid_dl:
+            inputs = jnp.array(seq, dtype=jnp.int32)
+            targets = jnp.array(pos, dtype=jnp.int32)
+            logits = model.apply({"params": optimizer.target}, inputs, deterministic=True)
+            inputs_len = (inputs > 0).sum(-1)
+            logits_last = logits[jnp.arange(logits.shape[0]), inputs_len - 1, :] # (b, v)
+            logits_topk = logits_last.argsort(-1)[:, -10:] # (b, 10)
+            y_pred = logits_last.argmax(-1)
+            valid_hitk += [label in topk for label, topk in zip(targets, logits_topk)]
+            valid_acc.extend(y_pred == targets)
+        print(f"[Val] Hit10: {jnp.array(valid_hitk).mean():.4f} - Acc: {jnp.array(valid_acc).mean():.4f}")
